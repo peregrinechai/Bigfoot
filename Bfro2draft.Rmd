@@ -1,0 +1,190 @@
+---
+title: "BFPro"
+author: "Peri (Teresa) Lardo"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Putting my libraries up
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r libraries}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(lubridate)
+library(forcats)
+library(treemapify)
+library(RColorBrewer)
+library(plyr)
+library(sf)
+library(plotly)
+library(usmap)
+
+# library(tmaptools)
+
+state_map<-usmap::us_map()
+```
+
+## Put in the dataset
+
+```{r data}
+new_england <- c("Connecticut", "Maine", "Massachusetts", "New Hampshire", "Rhode Island", "Vermont")
+mid_east <- c("Delaware", "Maryland", "New Jersey", "New York", "Pennsylvania")
+great_lakes <- c("Illinois", "Indiana", "Michigan", "Ohio", "Wisconsin")
+plains <- c("Iowa", "Kansas", "Minnesota", "Missouri", "Nebraska", "North Dakota", "South Dakota")
+southeast <- c("Alabama", "Arkansas", "Florida", "Georgia", "Kentucky", "Louisiana", "Mississippi", "North Carolina", "South Carolina", "Tennessee", "Virginia", "West Virginia")
+southwest <- c("Arizona", "New Mexico", "Oklahoma", "Texas")
+rocky_mountains <- c("Colorado", "Idaho", "Montana", "Utah", "Wyoming")
+far_west <- c("Alaska", "California", "Hawaii", "Nevada", "Oregon", "Washington")
+
+bfro_og <- read_csv("bfro_reports_geocoded.csv") 
+
+colnames(bfro_og)
+
+bfro <- bfro_og %>%
+  mutate(
+    region = case_when(state %in% far_west ~ "Far West",
+                       state %in% rocky_mountains ~ "Rocky Mountains",
+                       state %in% great_lakes ~ "Great Lakes",
+                       state %in% plains ~ "Plains",
+                       state %in% southeast ~ "Southeast",
+                       state %in% mid_east ~ "Mid-East",
+                       state %in% southwest ~ "Southwest",
+                       state %in% new_england ~ "New England"),
+    year = year(date),
+    date = date(date),
+    monoyr = month(date),
+    vocalizations = (str_detect(title, "vocalization") | str_detect(observed, "vocalization")),
+    howls = str_detect(title, "howl") | str_detect(observed, "howl"),
+    knocks = str_detect(title, "knock") | str_detect(observed, "knock"),
+    visuals = str_detect(title, "sighting"),
+    footprints = str_detect(observed, "footprint") | str_detect(title, "footprint"),
+    whoops = str_detect(observed, "whoop") | str_detect(title, "whoop"),
+    rock_throw = str_detect(title, "rock throw") | str_detect(observed, "rock throw"),
+    being_watched = str_detect(observed, "being watched"),
+    watching_me = str_detect(observed, "watching me"),
+    quiet = str_detect(observed, "quiet"),
+    silent = str_detect(observed, "silent"), 
+    silence = str_detect(observed, "silence"),
+    chatter = str_detect(observed, "chatter"),
+    clacking = (str_detect(title, "clack") | str_detect(observed, "clack")),
+    clicking = (str_detect(title, "click") | str_detect(observed, "click")),
+    quietude = ((quiet == TRUE) | (silent == TRUE) | (silence == TRUE)),
+    being_watched = ((being_watched == TRUE) | (watching_me == TRUE)),
+    sounds = ((vocalizations == TRUE) | (whoops == TRUE) | (chatter == TRUE) | (howls == TRUE)),
+    sense = case_when((sounds == TRUE) & (visuals == FALSE) ~ "Creature noises, no visual",
+                      (sounds == TRUE) & (visuals == TRUE) ~ "Visual & creature noises",
+                      (sounds == FALSE) & (visuals == TRUE) ~ "Visual, no creature noises",
+                      (sounds == FALSE) & (visuals == FALSE) & ((rock_throw == TRUE) | (knocks == TRUE) | (clacking == TRUE) | (clicking == TRUE)) ~ "Only noises in surroundings")
+) %>%
+  # filter(year > 1960) %>%
+  select(-c(quiet, silent, silence, watching_me, number, geohash))
+
+dim(bfro)
+```
+
+## Basic Top 10 States
+
+```{r}
+ggplot(bfro %>%
+           count(state) %>%
+           slice_max(n, n=10),
+       aes(x = state, y = n)) +
+    geom_bar(stat='identity', color="black", fill="lightgreen") + 
+    labs(x = "State", y = "Total Bigfoot Reports", title = "Top 10 States for Bigfoot Reports", subtitle = "Washington State leads in Bigfoot Reports") + 
+    scale_fill_brewer(palette = "Set1") + 
+  geom_text(aes(label= n), hjust = 1.5, color = "black") +
+    coord_flip()
+```
+
+## BASIC STATES
+
+```{r}
+state_table <- table(bfro %>% select(state))
+state_df <- as.data.frame(state_table)
+
+# merge data into map ----------------------------------------------------------
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+Bigfoot_Reports_Map <-base + geom_sf(aes(fill=Freq), color = "gray10") + 
+  scale_fill_viridis_c("Total Reports") +
+  labs(title = "Bigfoot Reports by State",
+       legend = "legend title") +
+  theme_void() + 
+  theme(legend.position = c(0.065, 0.65)) 
+
+
+Bigfoot_Pres_Map <- base + geom_sf(aes(fill=Freq), color = "gray10") + 
+  scale_fill_viridis_c("Total Reports") +
+  labs(title = "Bigfoot Reports by State",
+       legend = "Total Reports") +
+  theme_void() + 
+  theme(legend.position = c(0.081, 0.65),
+        legend.title = element_text(color = "black"),
+        legend.text = element_text(color = "black"),
+        text = element_text(size = 13), 
+        plot.title = element_text(color = "black")) 
+
+Bigfoot_Pres_Map
+ggsave("Bigfoot_Pres_Mappum.png", Bigfoot_Pres_Map, bg="white")
+
+```
+
+## Elements over Moon Phase
+
+```{r}
+library(ggridges)
+senses_bfro <- bfro %>% drop_na(sense)
+pres_elements <- ggplot(senses_bfro, aes(x=moon_phase, y=sense, color=sense, fill=sense)) + 
+  geom_density_ridges(scale = 0.8) + 
+  theme_ridges() + 
+  labs(title = "Visual & Auditory Report Elements Over the Moon Cycle\n") +
+  theme(legend.position = "none",
+        axis.title = element_blank(),
+        axis.text = element_text(size=13, color = "black"),
+        plot.title.position = "plot") +
+  geom_vline(xintercept = 0.5, color="red4") +
+  scale_x_continuous(name="Moon Phase", limits = c(0,1), breaks = c(0, 0.25, 0.5, 0.75, 1), labels=c("0.00" = "New", "0.25" = "Waxing", "0.50" = "Full", "0.75" = "Waning", "1.00" = "New"))
+# + 
+#   annotate(geom = 'text', color='gray10',
+#            label="Waning", y=0.85, x=0.7, angle=0) + 
+#   annotate(geom = 'text', color='gray10',
+#            label="Waxing", y=0.85, x=0.2, angle=0) 
+
+pres_elements
+ggsave("pres_elements.png", pres_elements, bg="white")
+```
+
+### Moon Phase
+
+
+```{r}
+
+moonhist <- ggplot(bfro, aes(x=moon_phase, fill="purple4")) + 
+  geom_histogram(binwidth=0.01, color='black', fill="purple4", alpha=0.6, position = 'identity') + 
+  labs(y='Reports', x='Moon Phase (Between New Moons)') + 
+  ggtitle('Bigfoot Reports Over the Moon Cycle') + 
+  theme_minimal() +
+  theme(text = element_text(size=13, color="black"),
+        axis.text = element_text(size=13)) +
+  scale_x_continuous(labels=c("0.00" = "New", "0.25" = "Waxing", "0.50" = "Full", "0.75" = "Waning", "1.00" = "New"))
+
+moonhist
+ggsave("moonhist.png", moonhist, bg="white")
+
+```
+

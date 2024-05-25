@@ -1,0 +1,1631 @@
+---
+title: "604 Project"
+author: "Peri (Teresa) Lardo"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Putting my libraries up
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r libraries}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(lubridate)
+library(forcats)
+```
+
+## Put in the dataset
+
+You can also embed plots, for example:
+
+```{r data}
+new_england <- c("Connecticut", "Maine", "Massachusetts", "New Hampshire", "Rhode Island", "Vermont")
+mid_east <- c("Delaware", "Maryland", "New Jersey", "New York", "Pennsylvania")
+great_lakes <- c("Illinois", "Indiana", "Michigan", "Ohio", "Wisconsin")
+plains <- c("Iowa", "Kansas", "Minnesota", "Missouri", "Nebraska", "North Dakota", "South Dakota")
+southeast <- c("Alabama", "Arkansas", "Florida", "Georgia", "Kentucky", "Louisiana", "Mississippi", "North Carolina", "South Carolina", "Tennessee", "Virginia", "West Virginia")
+southwest <- c("Arizona", "New Mexico", "Oklahoma", "Texas")
+rocky_mountains <- c("Colorado", "Idaho", "Montana", "Utah", "Wyoming")
+far_west <- c("Alaska", "California", "Hawaii", "Nevada", "Oregon", "Washington")
+
+bfro_og <- read_csv("bfro_reports_geocoded.csv") 
+
+colnames(bfro_og)
+
+bfro <- bfro_og %>%
+  mutate(
+    region = case_when(state %in% far_west ~ "Far West",
+                       state %in% rocky_mountains ~ "Rocky Mountains",
+                       state %in% great_lakes ~ "Great Lakes",
+                       state %in% plains ~ "Plains",
+                       state %in% southeast ~ "Southeast",
+                       state %in% mid_east ~ "Mid-East",
+                       state %in% southwest ~ "Southwest",
+                       state %in% new_england ~ "New England"),
+    year = year(date),
+    date = date(date),
+    monoyr = month(date),
+    vocalizations = (str_detect(title, "vocalization") | str_detect(observed, "vocalization")),
+    howls = str_detect(title, "howl") | str_detect(observed, "howl"),
+    knocks = str_detect(title, "knock") | str_detect(observed, "knock"),
+    visuals = str_detect(title, "sighting"),
+    footprints = str_detect(observed, "footprint") | str_detect(title, "footprint"),
+    whoops = str_detect(observed, "whoop") | str_detect(title, "whoop"),
+    rock_throw = str_detect(title, "rock throw") | str_detect(observed, "rock throw"),
+    being_watched = str_detect(observed, "being watched"),
+    watching_me = str_detect(observed, "watching me"),
+    quiet = str_detect(observed, "quiet"),
+    silent = str_detect(observed, "silent"), 
+    silence = str_detect(observed, "silence"),
+    chatter = str_detect(observed, "chatter"),
+    clacking = (str_detect(title, "clack") | str_detect(observed, "clack")),
+    clicking = (str_detect(title, "click") | str_detect(observed, "click")),
+    quietude = ((quiet == TRUE) | (silent == TRUE) | (silence == TRUE)),
+    being_watched = ((being_watched == TRUE) | (watching_me == TRUE)),
+    sounds = ((vocalizations == TRUE) | (whoops == TRUE) | (chatter == TRUE) | (howls == TRUE)),
+    sense = case_when((sounds == TRUE) & (visuals == FALSE) ~ "Creature noises, no visual",
+                      (sounds == TRUE) & (visuals == TRUE) ~ "Visual & creature noises",
+                      (sounds == FALSE) & (visuals == TRUE) ~ "Visual, no creature noises",
+                      (sounds == FALSE) & (visuals == FALSE) & ((rock_throw == TRUE) | (knocks == TRUE) | (clacking == TRUE) | (clicking == TRUE)) ~ "Only noises in surroundings")
+) %>%
+  # filter(year > 1960) %>%
+  select(-c(quiet, silent, silence, watching_me, number, geohash))
+
+dim(bfro)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+### **Numeric Variables of Interest**
+
+**Visibility** is one of the numeric variables I want to analyze. Visibility refers to the distance at which light or an object can be clearly discerned, and it is measured in miles, with visibility 10 being the most clear.
+
+```{r}
+summarize(bfro, median_visibility = median(visibility, na.rm = TRUE), mean_visibility = mean(visibility, na.rm = TRUE), min_visibility = min(visibility, na.rm = TRUE), max_visibility = max(visibility, na.rm = TRUE))
+
+```
+
+The high mean and median values of the **visibility** column indicate that most of the reports in our dataset do not suffer from low visibility issues – at least in the meteorological sense.
+
+I am also interested in looking into the **moon phase** variable, which is measured from 0.0 to 1.0, describing the point in the moon’s cycle from new moon to new moon. A value of 0 denotes a new moon, 0.5 denotes a full moon, and values closely approaching 1 denote the balsamic moon which leads into the next new moon. Thus, values under 0.5 refer to the *waxing* phases and values above 0.5 refer to the *waning* phases of the moon.
+
+```{r}
+summarize(bfro, median_moon_phase = median(moon_phase, na.rm = TRUE), mean_moon_phase = mean(moon_phase, na.rm = TRUE), min_moon_phase = min(moon_phase, na.rm = TRUE), max_moon_phase = max(moon_phase, na.rm = TRUE))
+```
+
+The mean and median for the **moon phase** variable both hover close to the value for a full moon. This suggests that there may be either a strong cluster of activity around the time of the full moon, or that the reports are fairly evenly spread throughout the moon cycle.
+
+The last numeric variable I want to analyze is **temperature**. The dataset offers three different options for temperature values - the daily high, the low, and a mid value, all measured in degrees Fahrenheit. I will opt to use the **temperature mid** value.
+
+```{r}
+summarize(bfro, median_temperature_mid = median(temperature_mid, na.rm = TRUE), mean_temperature_mid = mean(temperature_mid, na.rm = TRUE), min_temperature_mid = min(temperature_mid, na.rm = TRUE), max_temperature_mid = max(temperature_mid, na.rm = TRUE))
+
+```
+
+# **Analysis Plan**
+
+The specific questions I want to answer in my analysis fall into three categories: Where, When, and Weather.
+
+**Where?**
+
+-   Which areas of the U.S. have the highest number of Bigfoot reports?
+
+-   Are any specific **states** or **counties** heavily represented in the data?
+
+    I will visualize the ‘Where’ topics using horizontal bar charts in order to display state & county “top 10” values sliced from the dataset, and a treemap to display relative amounts of reports at a regional level.
+
+**When?**
+
+-   At what points in recent history did Bigfoot reports spike?
+
+-   What times of year (seasons) are the most & least represented in our Bigfoot report dataset?
+
+I will create a time series chart with separate lines for each region so we can more easily see any regional spikes. To display how each of the four seasons are represented in the dataset, I will create a treemap to better visualize the relative proportions for these 4 parts of the year.
+
+For these ‘When’ topics - as well as the ‘Weather’ topics that follow - I will need to drop any rows in the dataset where the ‘date’ value is *NA*.
+
+**Weather?**
+
+-   Are Bigfoot reports more likely to occur during certain parts of the **moon cycle**?
+
+-   Does **visibility** affect the quality of a report (classification)?
+
+For the ‘Weather’ topics, I will create histograms to visualize distribution for variables like **moon phase** and **temperature**.
+
+## Sample Visualizations
+
+### Geography - Where
+
+```{r}
+library(readr)
+LandArea <- read_csv("LandArea.csv")
+View(LandArea)
+```
+
+```{r}
+ggplot(bfro %>%
+         filter(footprints == TRUE) %>%
+           count(state) %>%
+           slice_max(n, n=10),
+       aes(x = fct_rev(fct_infreq(state, n)), y = n)) +
+    geom_bar(stat='identity', color="black", fill="lightgreen") + 
+    labs(x = "State", y = "Footprint Reports", title = "Top 10 States for Footprint Reports", subtitle = "California, Washington lead in reports of Sasquatch footprints") + 
+    scale_fill_brewer(palette = "Set1") + 
+#  geom_text(aes(label= n), hjust = 1.5, color = "black") +
+  theme_void() +
+  geom_text(aes(label = paste0(state, " (", n, ")"),
+                hjust = ifelse(n > 26, 1.08, -0.25))) +
+    coord_flip()
+
+
+top5states<- ggplot(bfro %>%
+           count(state) %>%
+           slice_max(n, n=5),
+       aes(x = fct_rev(fct_infreq(state, n)), y = n)) +
+    geom_bar(stat='identity', color="black", fill="pink") + 
+    labs(x = "State", y = "Reports", title = "Top 5 States for Bigfoot Reports", subtitle = "Washington leads in total reports of Sasquatch") + 
+    scale_fill_brewer(palette = "Set1") + 
+#  geom_text(aes(label= n), hjust = 1.5, color = "black") +
+  theme_void() +
+  geom_text(aes(label = paste0(state, " (", n, ")"),
+                hjust = ifelse(n > 26, 1.08, -0.25))) +
+    coord_flip() 
+
+top5states
+```
+
+```{r}
+ggplot(bfro %>%
+         filter(knocks == TRUE) %>%
+           count(state) %>%
+           slice_max(n, n=5),
+       aes(x = fct_rev(fct_infreq(state, n)), y = n)) +
+    geom_bar(stat='identity', color="black", fill="lightgreen") + 
+    labs(x = "State", y = "Knocking Reports", title = "Top 5 States for Knocking Reports", subtitle = "Washington leads in reports of Sasquatch knocking sounds") + 
+    scale_fill_brewer(palette = "Set1") + 
+  geom_text(aes(label= n), hjust = 1.5, color = "black") +
+#  theme_void() +
+    coord_flip()
+```
+
+```{r}
+ggplot(bfro %>%
+         filter(visuals == TRUE) %>%
+           count(state) %>%
+           slice_max(n, n=10),
+       aes(x = fct_rev(fct_infreq(state, n)), y = n)) +
+    geom_bar(stat='identity', color="black", fill="lightgreen") + 
+    labs(x = "State", y = "Visual Sighting Reports", title = "Top 10 States for Visual Sightings", subtitle = "Illinois leads in reports of Sasquatch sightings") + 
+    scale_fill_brewer(palette = "Set1") + 
+  geom_text(aes(label= n), hjust = 1.5, color = "black") +
+#  theme_void() +
+    coord_flip()
+```
+
+```{r}
+ggplot(bfro %>%
+         filter(sounds == TRUE) %>%
+           count(state) %>%
+           slice_max(n, n=10),
+       aes(x = fct_rev(fct_infreq(state, n)), y = n)) +
+    geom_bar(stat='identity', color="black", fill="lightgreen") + 
+    labs(x = "State", y = "Vocal Reports", title = "Top 10 States for Vocal Encounters", subtitle = "Washington leads in reports of Sasquatch vocalization reports") + 
+    scale_fill_brewer(palette = "Set1") + 
+  # geom_text(aes(label= n), hjust = 1.5, color = "black") +
+  geom_text(
+    aes(label= paste0(state, ' - ', n), 
+        hjust = ifelse(n > 35, 1.05, -0.15)), 
+        color = "black") +
+  theme_void() +
+    coord_flip()
+```
+
+```{r}
+ggplot(bfro %>%
+         filter(chatter == TRUE) %>%
+           count(state) %>%
+           slice_max(n, n=10),
+       aes(x = fct_rev(fct_infreq(state, n)), y = n)) +
+    geom_bar(stat='identity', color="black", fill="lightgreen") + 
+    labs(x = "State", y = "Chatter Reports", title = "Top 10 States for Chattering", subtitle = "boop") + 
+    scale_fill_brewer(palette = "Set1") + 
+  geom_text(aes(label= n), hjust = 1.5, color = "black") +
+#  theme_void() +
+    coord_flip()
+```
+
+####Regions
+
+```{r}
+# Package
+library(treemapify)
+library(RColorBrewer)
+# Plot
+ggplot(bfro %>%
+           count(region),
+            aes(fill = region,
+                area = n,
+                label = n)) +
+  geom_treemap() + 
+  geom_treemap_text(colour = "black",
+                    place = "centre") +
+  labs(title = "Bigfoot Reports by Region in the Continental US",
+       subtitle = "Pacific & Midwest Regions lead in Bigfoot Reports", 
+       fill = "Region") + 
+  theme(legend.position = "left") +
+  scale_fill_brewer(palette = "Pastel1")
+```
+
+## Bar Plots w/ Bools & Regions
+
+```{r}
+bfro1 <- bfro %>%
+  select(region, sounds, knocks, being_watched, quietude, rock_throw, footprints, chatter)
+```
+
+```{r}
+ggplot(bfro1 %>% filter(sounds == TRUE), aes(x = region)) + 
+  geom_bar() + 
+  labs(title = "Bigfoot Reports with Bigfoot Vocalizations or Other Sounds")
+
+ggplot(bfro1 %>% filter(knocks == TRUE), aes(x = region)) + 
+  geom_bar() + 
+  labs(title = "Bigfoot Reports featuring Knocking Sounds")
+
+ggplot(bfro1 %>% filter(being_watched == TRUE), aes(x = region)) + 
+  geom_bar() + 
+  labs(title = "Bigfoot Reports featuring Sensations of Being Watched")
+
+ggplot(bfro1 %>% filter(rock_throw == TRUE), aes(x = region)) + 
+  geom_bar() + 
+  labs(title = "Bigfoot Reports with Rock Throwing")
+
+ggplot(bfro1 %>% filter(quietude == TRUE), aes(x = region)) + 
+  geom_bar() + 
+  labs(title = "Bigfoot Reports where surroundings go quiet")
+
+ggplot(bfro1 %>% filter(footprints == TRUE), aes(x = region)) + 
+  geom_bar() + 
+  labs(title = "Bigfoot Reports with Bigfoot Footprints")
+
+ggplot(bfro1 %>% filter(chatter == TRUE), aes(x = region)) + 
+  geom_bar() + 
+  labs(title = "Bigfoot Reports with Chattering")
+
+```
+
+## Textual Analysis: Bag of Words
+
+```{r text libraries}
+library(tidytext)
+library(plyr)
+library(quanteda)
+library(quanteda.textplots)
+```
+
+Create the corpus
+
+```{r}
+bf_corpus <- corpus(bfro$observed)
+bf_summary <- summary(bf_corpus)
+bf_summary
+```
+
+### Tokens & Document-Feature Matrix
+
+```{r}
+bf_tokens <- tokens_tolower(tokens(bf_corpus, remove_punct = T, remove_numbers = T))
+bf_tokens1 <- tokens_select(bf_tokens, 
+                            pattern = stopwords("en"),
+                            selection = "remove")
+bf_tokens1 <- tokens_replace(bf_tokens1,
+                             pattern = lexicon:: hash_lemmas$token,
+                             replacement = lexicon:: hash_lemmas$lemma)
+bf_dfm <- dfm(bf_tokens1)
+bf_dfm
+```
+
+### Top Features
+
+```{r}
+topfeatures(bf_dfm, 30)
+```
+
+## Word Cloud
+
+```{r}
+# we can set a standard starting point though to ensure the same output.
+set.seed(1234)
+
+# draw the wordcloud
+textplot_wordcloud(bf_dfm, min_count = 500, random_order = FALSE)
+```
+
+## Feature Co-Occurrence Matrix
+
+```{r}
+smaller_dfm <- dfm_trim(bf_dfm, min_termfreq = 50)
+smaller_dfm <- dfm_trim(smaller_dfm, min_docfreq = .25, docfreq_type = "prop")
+
+smaller_fcm <- fcm(smaller_dfm)
+
+dim(smaller_fcm)
+```
+
+boop
+
+```{r}
+# myFeatures <- names(topfeatures((smaller_fcm)))
+# even_smaller_fcm <- fcm_select(smaller_fcm, pattern = myFeatures, selection = "keep")
+# dim(even_smaller_fcm)
+```
+
+```{r}
+size <- log(colSums(smaller_fcm))
+
+textplot_network(smaller_fcm, vertex_size = size/ max(size) * 3)
+```
+
+## Correlation
+
+```{r}
+library(corrplot)
+
+corrplot(cor(select_if(bfro, is.numeric)))
+```
+
+Well that wasn't very informative.
+
+## Boolean Variables
+
+```{r}
+ggplot(bfro, aes(x=region, y=visibility, fill=visuals)) +
+  geom_boxplot() +
+  scale_fill_manual(values=c("orange", "violet")) + 
+  labs(fill="Visual Sighting", y = "Visibility", x = "Region") +
+  ggtitle("Visibility & Region of Bigfoot Reports") + 
+  coord_flip()
+
+ggplot(bfro, aes(x=region, y=uv_index, fill=visuals)) +
+  geom_boxplot() +
+  scale_fill_manual(values=c("orange", "violet")) + 
+  labs(fill="Visual Sighting", y = "UV Index", x = "Region") +
+  ggtitle("UV Index & Region of Bigfoot Reports") + 
+  coord_flip()
+
+ggplot(bfro, aes(x=region, y=pressure, fill=visuals)) +
+  geom_boxplot() +
+  scale_fill_manual(values=c("orange", "violet")) + 
+  labs(fill="Visual Sighting", y = "Pressure", x = "Region") +
+  ggtitle("Pressure & Region of Bigfoot Reports") + 
+  coord_flip()
+
+ggplot(bfro, aes(x=region, y=moon_phase, fill=visuals)) +
+  geom_boxplot() +
+  scale_fill_manual(values=c("orange", "violet")) + 
+  labs(fill="Visual Sighting", y = "Moon Phase", x = "Region") +
+  ggtitle("Moon Phase & Region of Bigfoot Reports") + 
+  coord_flip()
+
+ggplot(bfro, aes(x=region, y=cloud_cover, fill=visuals)) +
+  geom_boxplot() +
+  scale_fill_manual(values=c("orange", "violet")) + 
+  labs(fill="Visual Sighting", y = "Cloud Cover", x = "Region") +
+  ggtitle("Cloud Cover & Region of Bigfoot Reports") + 
+  coord_flip()
+
+ggplot(bfro, aes(x=region, y=humidity, fill=visuals)) +
+  geom_boxplot() +
+  scale_fill_manual(values=c("orange", "violet")) + 
+  labs(fill="Visual Sighting", y = "Humidity", x = "Region") +
+  ggtitle("Humidity & Region of Bigfoot Reports") + 
+  coord_flip()
+
+ggplot(bfro, aes(x=region, y=dew_point, fill=visuals)) +
+  geom_boxplot() +
+  scale_fill_manual(values=c("orange", "violet")) + 
+  labs(fill="Visual Sighting", y = "Dew Point", x = "Region") +
+  ggtitle("Dew Point & Region of Bigfoot Reports") + 
+  coord_flip()
+```
+
+```{r}
+# Create time series chart, color-coded by region
+ggplot(bfro %>%
+         drop_na(date) %>%
+         group_by(region) %>% 
+         count(year), 
+       aes(x=year, y=n, group=region, color=region)) + 
+  geom_line(size=0.75) + 
+  labs(x="Year", y="Number of Bigfoot Reports", title="Bigfoot Reports Over Time, 2000-2021", color="Region") + 
+  # geom_label(
+  #   label="South Central 2004: 80 reports",
+  #   x=2004,
+  #   y=75,
+  #   label.padding = unit(0.55, "lines"),
+  #   label.size = 0.35,
+  #   color = "black",
+  #   fill = "lavender"
+  # ) + 
+  # geom_label(
+  #   label="New England 2016: 13 reports",
+  #   x=2010,
+  #   y=16,
+  #   label.padding = unit(0.55, "lines"),
+  #   label.size = 0.35,
+  #   color = "black",
+  #   fill = "turquoise"
+  # ) + 
+  theme(legend.position = c(.90, .73)) +
+  scale_x_continuous(n.breaks=7)
+```
+
+```{r}
+# Create time series chart, color-coded by region
+bfro2 <- bfro %>% 
+  group(region) %>%
+  count(year)
+
+ggplot(bfro2, aes(x=year, y=count(year))) + 
+  geom_line(data=bfro, aes(group=region), color="orange3", size=0.5, alpha=0.5) + 
+  geom_line(aes(color=region), color="blue4", size=1.1) +
+  scale_color_viridis_b() +
+  labs(x="Year", y="Number of Bigfoot Reports", title="Bigfoot Reports Over Time, 2000-2021", color="Region") + 
+  theme(legend.position = c(.90, .73)) +
+  # scale_x_continuous(n.breaks=7) +
+  facet_wrap(~region)
+```
+
+## Cat-Cat: the Bools
+
+```{r contingency table}
+colnames(bfro1)
+
+# Being Watched Sensation by footprint report
+table(bfro1$footprints, bfro1$being_watched)
+
+# Being watched sensation by knocks
+table(bfro1$knocks, bfro1$being_watched)
+
+# Being watched sensation by rock throwing
+table(bfro1$rock_throw, bfro1$being_watched)
+
+# Being watched sensation by sounds
+table(bfro1$sounds, bfro1$being_watched)
+
+# Being watched sensation by quietude
+table(bfro1$quietude, bfro1$being_watched)
+```
+
+## Report Elements in Different Seasons
+
+```{r}
+ggplot(bfro, aes(fill=sounds, x=season)) +
+  geom_bar()
+
+ggplot(bfro %>% filter(being_watched == TRUE), aes(fill=season, x=region)) + 
+  geom_bar() + 
+  ggtitle("Reports of Feeling Watched")
+
+ggplot(bfro %>% filter(sounds == TRUE), aes(fill=season, x=region)) + 
+  geom_bar() + 
+  ggtitle("Reports of Sounds")
+
+ggplot(bfro %>% filter(rock_throw == TRUE), aes(fill=season, x=region)) + 
+  geom_bar() + 
+  ggtitle("Reports of Rock Throwing")
+
+ggplot(bfro %>% filter(knocks == TRUE), aes(fill=season, x=region)) + 
+  geom_bar() + 
+  ggtitle("Reports of Knocking")
+```
+
+# Re-do of the Spring 2023 Project
+
+## Where?!
+
+```{r}
+# Slice top ten states from dataset, create hbar
+ggplot(bfro %>%
+         count(state) %>%
+         slice_max(n, n=10),
+       aes(x = fct_rev(fct_infreq(state)), y = n)) +
+    geom_bar(stat='identity', color="black", fill="lightgreen") + 
+    labs(x = "State", y = "Total Bigfoot Reports", title = "Top 10 States for Bigfoot Reports", subtitle = "Washington State leads in Bigfoot Reports") + 
+    scale_fill_brewer(palette = "Set1") + 
+  geom_text(aes(label= n), hjust = 1.5, color = "black") +
+    coord_flip()
+
+# Slice top 10 county values, create hbar
+ggplot(bfro %>%
+         count(state, county) %>%
+         slice_max(n, n=10),
+       aes(x = fct_rev(fct_infreq(county)), y = n, fill = state)) +
+  geom_bar(stat="identity", color="black") +
+  labs(x = "County", y = "Bigfoot Reports", title = "Top 10 U.S. Counties for Bigfoot Reports", fill = "State", subtitle = "Washington counties Pierce & Snohomish lead in Bigfoot reports") + 
+  geom_text(aes(label=n), hjust = 1.5, color = "black") +
+  scale_fill_brewer(palette = "Pastel1") +
+  guides(fill = guide_legend(reverse = TRUE)) +
+  coord_flip()
+```
+
+## When?!
+
+```{r}
+# Create treemap of seasons, filtering out where season is "Unknown"
+library(treemapify)
+ggplot(bfro %>%
+         filter(season != "Unknown") %>%
+           count(season),
+            aes(fill = season,
+                area = n,
+                label = n)) +
+  geom_treemap() + 
+  geom_treemap_text(colour = "black",
+                    place = "centre") +
+  labs(title = "Bigfoot Reports by Season",
+       subtitle = "Reports of Bigfoot are most popular in the summer & fall", 
+       fill = "Season") + 
+  theme(legend.position = "left") +
+  scale_fill_brewer(palette = "Pastel1")
+```
+
+## Weather?
+
+```{r}
+ggplot(bfro, aes(x=temperature_mid, fill=visuals)) +
+  geom_histogram(color='black', alpha=0.6, position = 'identity') +
+  scale_fill_manual(values=c("orange", "darkviolet")) + 
+  labs(fill="Visual Sighting", y = "Bigfoot Reports", x = "Temperature in Fahrenheit") +
+  ggtitle("Temperature (mid) during Bigfoot Sightings") +
+  theme_minimal()
+
+ggplot(bfro, aes(x=moon_phase, fill=visuals)) +
+  geom_histogram(color='black', alpha=0.6, position = 'identity', binwidth = 0.025, stat = 'bin') +
+  # geom_density(adjust=0.2, alpha=.2) +
+  scale_fill_manual(values=c("orange", "darkviolet")) + 
+  labs(fill="Visual Sighting", y = "Bigfoot Reports", x = "Moon Phase between New Moons") +
+  ggtitle("Bigfoot Reports over the Moon Cycle") +
+  theme_minimal()
+
+ggplot(bfro, aes(x=moon_phase, fill="#d558ab")) + 
+  geom_histogram(color='black', alpha=0.6, position = 'identity') + 
+  labs(y='Bigfoot Reports', x='Moon Phase Between New Moons') + 
+  ggtitle('Bigfoot Reports Over the Moon Cycle') + 
+  theme_minimal()
+
+absoluteT <- table(bfro$moon_phase)
+
+propT = prop.table(absoluteT)*100
+
+tableFreq = as.data.frame(absoluteT)
+names(tableFreq)=c("moonphase", "count")
+tableFreq$Percent=as.vector(propT)
+
+ggplot(tableFreq, aes(x=moonphase, y=count)) +
+  geom_line( color="gray15") +
+  geom_point(shape=21, fill="pink3", color="gray11", size=2) +
+  labs(y = "Reports", x = "Moon Phase") +
+  ggtitle("Bigfoot Reports Over the Course of the Moon Cycle")
+
+ggplot(tableFreq, aes(x=moonphase, y=count)) +
+  geom_line() +
+  # geom_point(shape=21, fill="cornflowerblue", color="gray11", size=1.2) +
+  labs(y = "Reports", x = "Moon Phase") +
+  ggtitle("Bigfoot Reports Over the Course of the Moon Cycle") 
+
+ggplot(bfro, aes(x=moon_phase)) +
+    geom_density()
+
+library(plyr)
+mu <- ddply(bfro %>% drop_na(sense), "sense", summarise, grp.mean=mean(moon_phase))
+
+# ggplot(bfro %>% drop_na(sense), aes(x=moon_phase, color=sense, after_stat(scaled))) + 
+#   geom_density_line() + 
+#   theme_minimal()
+
+ggplot(bfro %>% drop_na(visuals), aes(x=moon_phase, color=visuals, after_stat(scaled))) +
+  geom_density() 
+
+ggplot(bfro %>% drop_na(sense), aes(x=sense, y=moon_phase, fill=sense, color=sense)) + 
+  geom_violin(width=0.5, size=0.15) + 
+  coord_flip()+ 
+  theme_minimal()
+```
+
+## Time Series
+
+```{r}
+# ggplot(bfro %>%
+#   group_by(monoyr) %>%
+#   count(monoyr), aes(x=monoyr, y=n)) +
+#   geom_line() + 
+#   ggtitle("Total Bigfoot Reports by Month")
+
+# ggplot(bfro %>%
+#   group_by(year) %>%
+#   count(year), aes(x=year, y=n)) +
+#   geom_line() + 
+#   ggtitle("Total Bigfoot Reports, 2000-2021")
+# 
+# ggplot(bfro %>%
+#          filter(sounds == TRUE) %>%
+#          group_by(year) %>%
+#          count(year), aes(x=year, y=n)) +
+#   geom_line() + 
+#   ggtitle("Vocalization Reports, 2000-2021")
+# 
+# ggplot(bfro %>%
+#          filter(footprints == TRUE) %>%
+#          group_by(year) %>%
+#          count(year), aes(x=year, y=n)) +
+#   geom_line() + 
+#   ggtitle("Footprint Reports, 2000-2021")
+# 
+# ggplot(bfro %>%
+#          filter(knocks == TRUE) %>%
+#          group_by(year) %>%
+#          count(year), aes(x=year, y=n)) +
+#   geom_line() + 
+#   ggtitle("Knocking Reports, 2000-2021")
+# 
+# ggplot(bfro %>%
+#          filter(rock_throw == TRUE) %>%
+#          group_by(year) %>%
+#          count(year), aes(x=year, y=n)) +
+#   geom_line() + 
+#   ggtitle("Rock Throwing Reports, 2000-2021")
+# 
+# ggplot(bfro %>%
+#          filter(visuals == TRUE) %>%
+#          group_by(year) %>%
+#          count(year), aes(x=year, y=n)) +
+#   geom_line() + 
+#   ggtitle("Visual Sightings, 2000-2021")
+
+ggplot(bfro %>%
+         filter(!is.na(sense)) %>%
+         group_by(sense) %>%
+         count(year), aes(x=year, y=n, group=sense, color=sense)) +
+  geom_line(size=1.05) +
+  ggtitle("Bigfoot Reports by Observations, 2000-2021") +
+  theme_minimal() + 
+  ylab("Reports") + 
+  xlab("Year") + 
+  labs(color="Observations Reported")  + 
+  scale_color_manual(values=c("green4", "hotpink2", "turquoise4", "darkred"))
+  
+
+```
+
+## Choropleth
+
+```{r}
+# time to make a choropleth map
+library(sf)
+library(plotly)
+library(usmap)
+state_map<-usmap::us_map()
+
+
+# state_map <- state_map %>%
+#   filter(name != "Hawaii")
+
+# state_reports <- state_df %>% 
+#   summarize(State_Rps = Freq)
+```
+
+```{r}
+state_table <- table(bfro %>% select(state))
+state_df <- as.data.frame(state_table)
+
+trial_merge <- merge(state_df, LandArea, by="state")
+trial_merge <- trial_merge %>%
+  mutate(densitybyarea = Freq/LandAreaSqMi)
+
+state_df <- trial_merge %>%
+  select(state, densitybyarea)
+
+# merge data into map ----------------------------------------------------------
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+Bigfoot_choropleth<-base + geom_sf(aes(fill=densitybyarea)) + 
+  scale_fill_viridis_c("Reports per Square Mile") +
+  labs(title = "Total Bigfoot Reports",
+       legend = "legend title") +
+  theme_void()
+
+Bigfoot_choropleth
+```
+
+```{r}
+state_table <- table(bfro %>% filter(visuals == TRUE) %>% select(state))
+state_df <- as.data.frame(state_table)
+
+# merge data into map ----------------------------------------------------------
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+Visual_Bigfoot_choropleth<-base + geom_sf(aes(fill=Freq), color = "gray10") + 
+  scale_fill_viridis_c("Sightings") +
+  labs(title = "Visual Bigfoot Sightings, 2000-2021",
+       legend = "legend title") +
+  theme_void()
+
+Visual_Bigfoot_choropleth
+
+# -------density version------
+
+state_df <- trial_merge %>%
+  select(state, densitybyarea)
+
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+Visual_Bigfoot_densitychoropleth<-base + geom_sf(aes(fill=densitybyarea), color = "gray10") + 
+  scale_fill_viridis_c("Sightings") +
+  labs(title = "Visual Bigfoot Sightings, 2000-2021",
+       legend = "legend title") +
+  theme_void()
+
+Visual_Bigfoot_densitychoropleth 
+
+# ---------sounds -------------
+
+state_table <- table(bfro %>% filter(sounds == TRUE) %>% select(state))
+state_df <- as.data.frame(state_table)
+
+# merge data into map ----------------------------------------------------------
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+Sounds_Bigfoot_choropleth<-base + geom_sf(aes(fill=Freq), color = "gray10") + 
+  scale_fill_viridis_c("Auditory Reports") +
+  labs(title = "Auditory Bigfoot Sightings",
+       legend = "legend title") +
+  theme_void()
+
+Sounds_Bigfoot_choropleth
+
+# -------density version------
+
+state_df <- trial_merge %>%
+  select(state, densitybyarea)
+
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+Sound_Bigfoot_densitychoropleth<-base + geom_sf(aes(fill=densitybyarea), color = "gray10") + 
+  scale_fill_viridis_c("Sound Reports") +
+  labs(title = "Auditorty Bigfoot Sightings, 2000-2021",
+       legend = "legend title") +
+  theme_void()
+
+Sound_Bigfoot_densitychoropleth 
+
+```
+
+### Washington Counties
+
+```{r}
+#make choropleth of Washington counties
+county_map<-usmap::us_map(regions = "counties")
+
+wa_county_map <- county_map %>%
+  filter(full == "Washington")
+
+wa_county_table <- table(bfro %>% filter(state == "Washington") %>% select(county))
+wa_county_df <- as.data.frame(wa_county_table)
+
+# merge data into map ----------------------------------------------------------
+myMapBF<-merge(wa_county_map,wa_county_df, by.x="county", "county")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+wac_choropleth<-base + geom_sf(aes(fill=Freq), color="gray10") + 
+  scale_fill_viridis_c("Bigfoot Reports") +
+  labs(title = "Total Bigfoot Reports, 2000-2021",
+       legend = "legend title") +
+  theme_void()
+
+wac_choropleth
+```
+
+### Regional Maps
+
+#### New England
+
+```{r}
+region_table <- table(bfro %>% filter(region == "New England") %>% select(state))
+state_df <- as.data.frame(region_table)
+
+# merge data into map ----------------------------------------------------------
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+NE_BF_map<-base + geom_sf(aes(fill=Freq), color = "gray10") + 
+  scale_fill_viridis_c("Reports") +
+  labs(title = "New England Bigfoot Reports",
+       legend = "legend title") +
+  theme_void()
+
+NE_BF_map
+
+# -------density version------
+
+trial_merge <- merge(state_df, LandArea, by="state")
+trial_merge <- trial_merge %>%
+  mutate(densitybyarea = Freq/LandAreaSqMi)
+
+state_df <- trial_merge %>%
+  select(state, densitybyarea)
+
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+NE_Bigfoot_densitychoropleth<-base + geom_sf(aes(fill=densitybyarea), color = "gray10") + 
+  scale_fill_viridis_c("Sightings") +
+  labs(title = "New England Bigfoot Sightings",
+       legend = "legend title") +
+  theme_void()
+
+NE_Bigfoot_densitychoropleth 
+```
+
+#### Southwest
+
+```{r}
+region_table <- table(bfro %>% filter(region == "Southwest") %>% select(state))
+state_df <- as.data.frame(region_table)
+
+# merge data into map ----------------------------------------------------------
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+SW_BF_map<-base + geom_sf(aes(fill=Freq), color = "gray10") + 
+  scale_fill_viridis_c("Reports") +
+  labs(title = "Southwest Bigfoot Reports",
+       legend = "legend title") +
+  theme_void()
+
+SW_BF_map
+
+# -------density version------
+
+trial_merge <- merge(state_df, LandArea, by="state")
+trial_merge <- trial_merge %>%
+  mutate(densitybyarea = Freq/LandAreaSqMi)
+
+state_df <- trial_merge %>%
+  select(state, densitybyarea)
+
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+SW_Bigfoot_densitychoropleth<-base + geom_sf(aes(fill=densitybyarea), color = "gray10") + 
+  scale_fill_viridis_c("Sightings") +
+  labs(title = "Southwest Bigfoot Sightings",
+       legend = "legend title") +
+  theme_void()
+
+SW_Bigfoot_densitychoropleth 
+```
+
+#### Great Lakes
+
+```{r}
+region_table <- table(bfro %>% filter(region == "Great Lakes") %>% select(state))
+state_df <- as.data.frame(region_table)
+
+# merge data into map ----------------------------------------------------------
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+GL_BF_map<-base + geom_sf(aes(fill=Freq), color = "gray10") + 
+  scale_fill_viridis_c("Reports") +
+  labs(title = "Great Lakes Region Bigfoot Reports",
+       legend = "legend title") +
+  theme_void()
+
+GL_BF_map
+
+# -------density version------
+
+trial_merge <- merge(state_df, LandArea, by="state")
+trial_merge <- trial_merge %>%
+  mutate(densitybyarea = Freq/LandAreaSqMi)
+
+state_df <- trial_merge %>%
+  select(state, densitybyarea)
+
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+GL_Bigfoot_densitychoropleth<-base + geom_sf(aes(fill=densitybyarea), color = "gray10") + 
+  scale_fill_viridis_c("Sightings") +
+  labs(title = "GL Bigfoot Sightings",
+       legend = "legend title") +
+  theme_void()
+
+GL_Bigfoot_densitychoropleth 
+```
+
+#### Mid-East Region
+
+```{r}
+region_table <- table(bfro %>% filter(region == "Mid-East") %>% select(state))
+state_df <- as.data.frame(region_table)
+
+# merge data into map ----------------------------------------------------------
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+ME_BF_map<-base + geom_sf(aes(fill=Freq), color = "gray10") + 
+  scale_fill_viridis_c("Reports") +
+  labs(title = "Mid-Atlantic Region Bigfoot Reports",
+       legend = "legend title") +
+  theme_void()
+
+ME_BF_map
+
+# -------density version------
+
+trial_merge <- merge(state_df, LandArea, by="state")
+trial_merge <- trial_merge %>%
+  mutate(densitybyarea = Freq/LandAreaSqMi)
+
+state_df <- trial_merge %>%
+  select(state, densitybyarea)
+
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+ME_Bigfoot_densitychoropleth<-base + geom_sf(aes(fill=densitybyarea), color = "gray10") + 
+  scale_fill_viridis_c("Sightings") +
+  labs(title = "Mideast Bigfoot Sightings",
+       legend = "legend title") +
+  theme_void()
+
+ME_Bigfoot_densitychoropleth 
+```
+
+#### Far West
+
+```{r}
+region_table <- table(bfro %>% filter(region == "Far West") %>% select(state))
+state_df <- as.data.frame(region_table)
+
+# merge data into map ----------------------------------------------------------
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+FW_BF_map<-base + geom_sf(aes(fill=Freq), color = "gray10") + 
+  scale_fill_viridis_c("Reports") +
+  labs(title = "Bigfoot Reports in the Far West",
+       legend = "legend title") +
+  theme_void()
+
+FW_BF_map
+
+# -------density version------
+
+trial_merge <- merge(state_df, LandArea, by="state")
+trial_merge <- trial_merge %>%
+  mutate(densitybyarea = Freq/LandAreaSqMi)
+
+state_df <- trial_merge %>%
+  select(state, densitybyarea)
+
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+FW_Bigfoot_densitychoropleth<-base + geom_sf(aes(fill=densitybyarea), color = "gray10") + 
+  scale_fill_viridis_c("Sightings") +
+  labs(title = "Far West Bigfoot Sightings",
+       legend = "legend title") +
+  theme_void()
+
+FW_Bigfoot_densitychoropleth 
+```
+
+#### Plains
+
+```{r}
+region_table <- table(bfro %>% filter(region == "Plains") %>% select(state))
+state_df <- as.data.frame(region_table)
+
+# merge data into map ----------------------------------------------------------
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+Plains_BF_map<-base + geom_sf(aes(fill=Freq), color = "gray10") + 
+  scale_fill_viridis_c("Reports") +
+  labs(title = "Bigfoot Reports in the Plains Region",
+       legend = "legend title") +
+  theme_void()
+
+Plains_BF_map
+
+# -------density version------
+
+trial_merge <- merge(state_df, LandArea, by="state")
+trial_merge <- trial_merge %>%
+  mutate(densitybyarea = Freq/LandAreaSqMi)
+
+state_df <- trial_merge %>%
+  select(state, densitybyarea)
+
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+Plains_Bigfoot_densitychoropleth<-base + geom_sf(aes(fill=densitybyarea), color = "gray10") + 
+  scale_fill_viridis_c("Sightings") +
+  labs(title = "Plains Bigfoot Sightings",
+       legend = "legend title") +
+  theme_void()
+
+Plains_Bigfoot_densitychoropleth 
+```
+
+#### Southeast
+
+```{r}
+region_table <- table(bfro %>% filter(region == "Southeast") %>% select(state))
+state_df <- as.data.frame(region_table)
+
+# merge data into map ----------------------------------------------------------
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+Southeast_BF_map<-base + geom_sf(aes(fill=Freq), color = "gray10") + 
+  scale_fill_viridis_c("Reports") +
+  labs(title = "Southeast Region Bigfoot Reports",
+       legend = "legend title") +
+  theme_void()
+
+Southeast_BF_map
+
+# -------density version------
+
+trial_merge <- merge(state_df, LandArea, by="state")
+trial_merge <- trial_merge %>%
+  mutate(densitybyarea = Freq/LandAreaSqMi)
+
+state_df <- trial_merge %>%
+  select(state, densitybyarea)
+
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+Southeast_Bigfoot_densitychoropleth<-base + geom_sf(aes(fill=densitybyarea), color = "gray10") + 
+  scale_fill_viridis_c("Sightings") +
+  labs(title = "Southeast Bigfoot Sightings",
+       legend = "legend title") +
+  theme_void()
+
+Southeast_Bigfoot_densitychoropleth
+```
+
+#### Rocky Mountains
+
+```{r}
+region_table <- table(bfro %>% filter(region == "Rocky Mountains") %>% select(state))
+state_df <- as.data.frame(region_table)
+
+# merge data into map ----------------------------------------------------------
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+RM_BF_map<-base + geom_sf(aes(fill=Freq), color = "gray10") + 
+  scale_fill_viridis_c("Reports") +
+  labs(title = "Bigfoot Sightings in Rocky Mountains Region",
+       legend = "legend title") +
+  theme_void()
+
+RM_BF_map
+
+# -------density version------
+
+trial_merge <- merge(state_df, LandArea, by="state")
+trial_merge <- trial_merge %>%
+  mutate(densitybyarea = Freq/LandAreaSqMi)
+
+state_df <- trial_merge %>%
+  select(state, densitybyarea)
+
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+RM_Bigfoot_densitychoropleth<-base + geom_sf(aes(fill=densitybyarea), color = "gray10") + 
+  scale_fill_viridis_c("Sightings") +
+  labs(title = "Rocky Mountain Bigfoot Sightings",
+       legend = "legend title") +
+  theme_void()
+
+RM_Bigfoot_densitychoropleth
+```
+
+## Basic top 10
+
+```{r}
+ggplot(bfro %>%
+           count(state) %>%
+           slice_max(n, n=10),
+       aes(x = state, y = n)) +
+    geom_bar(stat='identity', color="black", fill="lightgreen") + 
+    labs(x = "State", y = "Total Bigfoot Reports", title = "Top 10 States for Bigfoot Reports", subtitle = "Washington State leads in Bigfoot Reports") + 
+    scale_fill_brewer(palette = "Set1") + 
+  geom_text(aes(label= n), hjust = 1.5, color = "black") +
+    coord_flip()
+```
+
+## BASIC STATES
+
+```{r}
+state_table <- table(bfro %>% select(state))
+state_df <- as.data.frame(state_table)
+
+# merge data into map ----------------------------------------------------------
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+Bigfoot_Reports_Map <-base + geom_sf(aes(fill=Freq), color = "gray10") + 
+  scale_fill_viridis_c("Total Reports") +
+  labs(title = "Bigfoot Reports by State",
+       legend = "legend title") +
+  theme_void() + 
+  theme(legend.position = c(0.065, 0.65)) 
+
+
+Bigfoot_Pres_Map <- base + geom_sf(aes(fill=Freq), color = "gray10") + 
+  scale_fill_viridis_c("Total Reports") +
+  labs(title = "Bigfoot Reports by State",
+       legend = "legend title") +
+  theme_void() + 
+  theme(legend.position = c(0.087, 0.65),
+        legend.title = element_text(color = "black"),
+        legend.text = element_text(color = "black"),
+        plot.title = element_text(color = "black")) 
+
+
+# ----------------------
+
+# Frequency Table
+absoluteT = table(bfro$state)
+
+propT = prop.table(absoluteT)*100
+
+tableFreq=as.data.frame(absoluteT)
+names(tableFreq)=c("state","count")
+tableFreq$percent=as.vector(propT)
+
+myMapBF <- merge(state_map,tableFreq, by.x="full", "state")
+
+base<-ggplot(myMapBF)
+
+Bigfoot_Reports_PMap <-base + geom_sf(aes(fill=percent), color = "gray10") + 
+  scale_fill_viridis_c("Total Reports") +
+  labs(title = "Bigfoot Reports by State",
+       legend = "legend title") +
+  theme_void() 
+
+Bigfoot_Reports_PMap
+```
+
+## Elements
+
+```{r}
+state_table <- table(bfro %>% select(state))
+state_df <- as.data.frame(state_table)
+
+# merge data into map ----------------------------------------------------------
+myMapBF<-merge(state_map,state_df, by.x="full", "state")
+
+# prepare plot
+
+base<-ggplot(myMapBF)
+
+Elements_Map <-base + geom_sf(aes(fill=Freq), color = "gray10") + 
+  scale_fill_viridis_c("Total Reports") +
+  labs(title = "Bigfoot Reports by State",
+       legend = "legend title") +
+  theme_void() + 
+  theme(legend.position = c(0.065, 0.65)) 
+
+Elements_Map
+```
+
+## Atmostphere
+
+```{r}
+atmos <- c("temperature_high", "temperature_mid", "moon_phase", 'temperature_low', "dew_point", "humidity", "cloud_cover", "precip_intensity", "precip_probability", "precip", "pressure", "uv_index", "visibility", "wind_bearing", "wind_speed")
+
+boopems <- c("temperature_high", "temperature_mid", "moon_phase", 'temperature_low', "dew_point", "humidity", "cloud_cover", "precip_intensity", "precip_probability", "precip", "pressure", "uv_index", "visibility", "wind_bearing", "wind_speed")
+
+#ggplot(bfro, aes(x=moon_phase, y=precip_intensity)) +
+#  geom_point()
+
+var <- sym(i)
+boop <- sym(j)
+
+for (i in atmos) {
+  for (j in boopems) {
+    print(ggplot(bfro, aes(x=!!boop, y=!!var)) +
+            geom_point() + 
+            ggtitle(paste0("plot_", j, "_and_", i))) 
+    Sys.sleep(2)
+  }
+  }
+```
+
+```{r}
+library(ggridges)
+senses_bfro <- bfro %>% drop_na(sense)
+pres_elements <- ggplot(senses_bfro, aes(x=moon_phase, y=sense, color=sense, fill=sense)) + 
+  geom_density_ridges(scale = 0.8) + 
+  theme_ridges() + 
+  labs(title = "Visual & Auditory Report Elements Over the Moon Cycle\n") +
+  theme(legend.position = "none",
+        axis.title = element_blank(),
+        axis.text = element_text(size=13, color = "black"),
+        plot.title.position = "plot") +
+  geom_vline(xintercept = 0.5, color="red4") +
+  scale_x_continuous(name="Moon Phase", limits = c(0,1), breaks = c(0, 0.25, 0.5, 0.75, 1), labels=c("0.00" = "New", "0.25" = "Waxing", "0.50" = "Full", "0.75" = "Waning", "1.00" = "New"))
+# + 
+#   annotate(geom = 'text', color='gray10',
+#            label="Waning", y=0.85, x=0.7, angle=0) + 
+#   annotate(geom = 'text', color='gray10',
+#            label="Waxing", y=0.85, x=0.2, angle=0) 
+
+pres_elements
+```
+
+### \*\*\*\*Moon Phase & Elements (check above lol)
+
+```{r}
+elementslist <- c("vocalizations", "howls", "knocks", "visuals", "footprints", "whoops", "rock_throw", "being_watched", "chatter", "clacking", "clicking", "quietude", "sounds")
+
+for (i in elementslist) {
+  print(ggplot(bfro %>% filter(i == TRUE), aes(x=moon_phase, y=i, color=i, fill=i)) + 
+  geom_density_ridges(scale = 0.8) + 
+  theme_ridges() + 
+  theme(legend.position = "none") +
+  scale_x_continuous(name="Moon Phase", limits = c(0,1), breaks = c(0, 0.25, 0.5, 0.75, 1)) + 
+  geom_vline(xintercept = 0.5, color="black") + 
+  annotate(geom = 'text', color='gray10',
+           label="Waning", y=0.85, x=0.7, angle=0) + 
+  annotate(geom = 'text', color='gray10',
+           label="Waxing", y=0.85, x=0.2, angle=0)) 
+  Sys.sleep(2)
+}
+
+
+```
+
+```{r}
+# Making an Element Counter
+bfro_c <- bfro
+
+cols <- sapply(bfro_c, is.logical)
+bfro_c[,cols] <- lapply(bfro_c[,cols], as.numeric)
+
+head(bfro_c)
+```
+
+```{r}
+# Create element counter by combining the elements of each report
+
+bfro_c <- bfro_c %>%
+  mutate(
+    elementsum = vocalizations + howls + knocks + visuals + footprints + whoops + rock_throw + being_watched + chatter + clacking + clicking + quietude)
+```
+
+```{r}
+# Moon phases & report elements
+
+ggplot(bfro_c, aes(x=moon_phase, y=elementsum, color=region)) + 
+  geom_point()
+```
+
+```{r}
+
+moonhist <- ggplot(bfro, aes(x=moon_phase, fill="purple4")) + 
+  geom_histogram(binwidth=0.01, color='black', fill="purple4", alpha=0.6, position = 'identity') + 
+  labs(y='Reports', x='Moon Phase (Between New Moons)') + 
+  ggtitle('Bigfoot Reports Over the Moon Cycle') + 
+  theme_minimal() +
+  # theme(legend.position = "none",
+  #       text = element_text(size=13, color="black"),
+  #       axis.text = element_text(size=13, color="black"),
+  #       axis.line = element_blank(),
+  #       axis.line.x = element_blank(),
+  #       axis.line.y = element_blank(),
+  #       axis.title = element_blank(),
+  #       panel.grid = element_line(color = "gray14", size=0.2, linetype=1)) +
+  scale_x_continuous(labels=c("0.00" = "New", "0.25" = "Waxing", "0.50" = "Full", "0.75" = "Waning", "1.00" = "New"))
+
+moonhist
+
+
+```
+
+```{r}
+ggplot(bfro, aes(x=temperature_mid, y=pressure)) + geom_point() + labs(title="Temperature midpoint & atmospheric pressure")
+
+ggplot(bfro, aes(x=temperature_mid, y=moon_phase)) + geom_point() + labs(title="Temperature midpoint & moon phase")
+
+ggplot(bfro, aes(x=temperature_mid, y=dew_point)) + geom_point() + labs(title="Temperature midpoint & dewpoint")
+
+ggplot(bfro, aes(x=temperature_mid, y=humidity)) + geom_point() + labs(title="Temperature midpoint & humidity")
+
+ggplot(bfro, aes(x=temperature_mid, y=cloud_cover)) + geom_point() + labs(title="Temperature midpoint & cloud_cover")
+
+ggplot(bfro, aes(x=temperature_mid, y=precip_intensity)) + geom_point() + labs(title="Temperature midpoint & Precipitation Intensity")
+
+ggplot(bfro, aes(x=temperature_mid, y=precip_probability)) + geom_point() + labs(title="Temperature midpoint & precipitation probability")
+
+# ggplot(bfro, aes(x=temperature_mid, y=precip)) + geom_point() + labs(title="Temperature midpoint & precipitation")
+
+ggplot(bfro, aes(x=temperature_mid, y=uv_index)) + geom_point() + labs(title="Temperature midpoint & UV index")
+
+ggplot(bfro, aes(x=temperature_mid, y=visibility)) + geom_point() + labs(title="Temperature midpoint & visibility")
+
+ggplot(bfro, aes(x=temperature_mid, y=wind_bearing)) + geom_point() + labs(title="Temperature midpoint & wind_bearing")
+
+ggplot(bfro, aes(x=temperature_mid, y=wind_speed)) + geom_point() + labs(title="Temperature midpoint & wind speed")
+```
+
+## More maps - regional
+
+```{r}
+library(raster)
+
+link="https://github.com/DACSS-Visual/SpatialData/raw/main/maps/wazipMap.gpkg"
+zipMap=sf::read_sf(link, layer='zips')
+
+# see some rows
+head(zipMap)
+
+base=ggplot(data = zipMap)
+base + geom_sf()
+```
+
+```{r}
+mapCRS=crs(zipMap) # projection of our map
+
+bfro_mapPoints=st_as_sf(bfro %>% filter(state == "Washington") %>% drop_na(latitude),# data frame
+                                    coords = c("longitude","latitude"), # form the data frame
+                                    remove = TRUE, # remove lon/lat
+                                    crs=mapCRS) # projection for spatial object
+```
+
+```{r}
+names(bfro_mapPoints)
+```
+
+```{r}
+library(tmaptools)
+get_proj4(crs(bfro_mapPoints))
+```
+
+```{r}
+base=ggplot(data = zipMap) + theme_light() + geom_sf(fill='grey90', color='white') 
+
+contributors=base + 
+                geom_sf(data=bfro_mapPoints, size=0.2,alpha=0.5) 
+
+contributors
+```
+
+```{r}
+SE_bfro <- bfro %>% filter(region == "Southeast")
+
+FW_bfro <- bfro %>% filter(region == "Far West")
+
+NE_bfro <- bfro %>% filter(region == "New England")
+
+ME_bfro <- bfro %>% filter(region == "Mid-East")
+
+SW_bfro <- bfro %>% filter(region == "Southwest")
+
+GL_bfro <- bfro %>% filter(region == "Great Lakes")
+
+Plains_bfro <- bfro %>% filter(region == "Plains")
+
+RM_bfro <- bfro %>% filter(region == "Rocky Mountains")
+```
+
+## Freq Tables
+
+```{r}
+absoluteT <- table(bfro$quietude)
+
+propT = prop.table(absoluteT)*100
+
+tableFreq = as.data.frame(absoluteT)
+names(tableFreq)=c("quietude", "count")
+tableFreq$Percent=as.vector(propT)
+tableFreq
+
+# Total df percent of VISUAL reports is 28.43%
+
+absoluteT <- table(NE_bfro$quietude)
+
+propT = prop.table(absoluteT)*100
+
+tableFreq = as.data.frame(absoluteT)
+names(tableFreq)=c("quietude", "count")
+tableFreq$Percent=as.vector(propT)
+tableFreq
+
+# NEW ENGLAND percent of VISUAL REPORTS is 28.81%
+
+absoluteT <- table(SE_bfro$quietude)
+
+propT = prop.table(absoluteT)*100
+
+tableFreq = as.data.frame(absoluteT)
+names(tableFreq)=c("quietude", "count")
+tableFreq$Percent=as.vector(propT)
+tableFreq
+
+# SOUTHEAST percent of VISUAL REPORTS is 30.394%
+
+absoluteT <- table(SW_bfro$whoops)
+
+propT = prop.table(absoluteT)*100
+
+tableFreq = as.data.frame(absoluteT)
+names(tableFreq)=c("whoops", "count")
+tableFreq$Percent=as.vector(propT)
+tableFreq
+
+# SOUTHWEST percent of VISUAL REPORTS is 28.575%
+
+absoluteT <- table(GL_bfro$whoops)
+
+propT = prop.table(absoluteT)*100
+
+tableFreq = as.data.frame(absoluteT)
+names(tableFreq)=c("whoops", "count")
+tableFreq$Percent=as.vector(propT)
+tableFreq
+
+# GREAT LAKES percent of VISUAL reports is 38.39%
+
+
+absoluteT <- table(ME_bfro$quietude)
+
+propT = prop.table(absoluteT)*100
+
+tableFreq = as.data.frame(absoluteT)
+names(tableFreq)=c("quietude", "count")
+tableFreq$Percent=as.vector(propT)
+tableFreq
+
+# Mid-East percent of VISUAL reports is 25.92593
+
+absoluteT <- table(FW_bfro$quietude)
+
+propT = prop.table(absoluteT)*100
+
+tableFreq = as.data.frame(absoluteT)
+names(tableFreq)=c("quietude", "count")
+tableFreq$Percent=as.vector(propT)
+tableFreq
+
+# Far West percent of VISUAL reports is 19.41
+
+absoluteT <- table(Plains_bfro$quietude)
+
+propT = prop.table(absoluteT)*100
+
+tableFreq = as.data.frame(absoluteT)
+names(tableFreq)=c("quietude", "count")
+tableFreq$Percent=as.vector(propT)
+tableFreq
+
+# PLAINS percent of Visual reports is 33.1058
+
+absoluteT <- table(RM_bfro$quietude)
+
+propT = prop.table(absoluteT)*100
+
+tableFreq = as.data.frame(absoluteT)
+names(tableFreq)=c("quietude", "count")
+tableFreq$Percent=as.vector(propT)
+tableFreq
+
+# Rocky Mountain visual reports is 26.855
+
+print("Great Lakes Region has the highest percentage of visual reports, with over 38% of reports having a visual element.")
+```
+
+```{r}
+region_list <- c("bfro$sounds", "NE_bfro$sounds", "SE_bfro$sounds", "SW_bfro$sounds", "GL_bfro$sounds", "ME_bfro$sounds", "FW_bfro$sounds", "Plains_bfro$sounds", "RM_bfro$sounds")
+
+
+```
+
+```{r}
+
+```
